@@ -362,8 +362,11 @@ function App() {
                 />
             </div>
             <div className="left">
-                <h1 className="title">Fusion Chess</h1>
-                <h3 style={{ color: "white" }}>
+                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "12px" }}>
+                    <img src="/fchess.png" style={{ width: "50px", height: "50px" }} />
+                    <h1 className="title">Fusion Chess</h1>
+                </div>
+                <h3 style={{ color: "white", marginTop: "-10px" }}>
                     <a style={{ color: "#4db2ff" }} href="https://github.com/bubner/" target="_blank" rel="noreferrer">
                         Lucas Bubner
                     </a>
