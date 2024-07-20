@@ -14,19 +14,24 @@ class Engine {
     depth: number;
     evalBarHeight: number;
 
-    constructor(fen: string, vfen: string, depth: number) {
+    constructor(initfen: string, initvfen: string, depth: number) {
         this.engine = new Worker("/stockfish.js");
         this.fusionengine = new Worker("/stockfish.js");
         this.eval = ["0.0", "nil"];
-        this.fen[0] = fen;
-        this.fen[1] = vfen;
+        this.fen[0] = initfen;
+        this.fen[1] = initvfen;
         this.depth = depth;
         this.engine.onmessage = (e) => this.onStockfishMessage(e, this.fen, "e");
         this.fusionengine.onmessage = (e) => this.onStockfishMessage(e, this.fen, "v");
         this.evalBarHeight = 50;
     }
 
-    onStockfishMessage = (event: MessageEvent, fen: string[], engine: string) => {
+    updateFens(fen: string, vfen: string) {
+        this.fen[0] = fen;
+        this.fen[1] = vfen;
+    }
+
+    onStockfishMessage = (event: MessageEvent, fen: string[], engine: "e" | "v") => {
         // console.debug(`SF15: ${event.data}`);
         if (event.data.startsWith("info depth")) {
             let messageEvalType;
@@ -45,7 +50,26 @@ class Engine {
                 messageEvalType = message[message.indexOf("cp") + 1];
             }
 
-            const evaluation = this._convertEvaluation(String(messageEvalType / 100.0), turn);
+            const tmp = String(messageEvalType / 100.0);
+            let evaluation = tmp;
+            const flt = parseFloat(tmp);
+            const abs = Math.abs(flt);
+            switch (turn) {
+                case "w":
+                    if (flt > 0) {
+                        evaluation = abs.toString();
+                    } else if (flt < 0) {
+                        evaluation = "-" + abs;
+                    }
+                    break;
+                case "b":
+                    if (flt > 0) {
+                        evaluation = "-" + abs;
+                    } else if (flt < 0) {
+                        evaluation = abs.toString();
+                    }
+                    break;
+            }
             // Check if the eval is NaN
             if (evaluation.includes("NaN")) {
                 // Must be a M value
@@ -69,7 +93,8 @@ class Engine {
             const choseneval = this.chooseAppropriateEval();
             if (choseneval.startsWith("M")) {
                 // Is checkmate in X, fill the whole bar depending on which side is winning
-                heightEval = (turn === "w" && !choseneval.includes("-")) || (turn === "b" && choseneval.includes("-")) ? 0 : 100;
+                heightEval =
+                    (turn === "w" && !choseneval.includes("-")) || (turn === "b" && choseneval.includes("-")) ? 0 : 100;
             } else {
                 heightEval = choseneval.startsWith("-")
                     ? 50 + this._calcHeight(Math.abs(Number(choseneval)))
@@ -79,7 +104,7 @@ class Engine {
         }
     };
 
-    matchEngine(evaluation: string) {
+    matchEngine(evaluation: "s" | "v" | "n") {
         switch (evaluation) {
             case this.eval[0]:
                 return "s";
@@ -117,8 +142,9 @@ class Engine {
             // Both engines say white is winning
             return String(highest.toFixed(1));
         } else {
-            // Engines conflict on who is winning, return a mashed result
-            return String((lowest - (lowest - highest)).toFixed(1));
+            // Engines conflict on who is winning, return some magic
+            const magic = highest / lowest;
+            return String(magic.toFixed(1));
         }
     }
 
@@ -133,116 +159,69 @@ class Engine {
             return (8 * x) / 145 + 5881 / 145;
         }
     };
-
-    private _convertEvaluation = (ev: string, turn: string) => {
-        if (ev.startsWith("M")) {
-            ev = `M${ev.substring(1)}`;
-        }
-        if (turn === "b" && !ev.startsWith("M")) {
-            if (ev.startsWith("-")) {
-                ev = ev.substring(1);
-            } else {
-                ev = `-${ev}`;
-            }
-        }
-        return ev;
-    };
 }
 
-function Stockfish({
-    fen,
-    vfen,
-    depth,
-    shouldRun,
-}: {
-    fen: string | null;
-    vfen: string;
-    depth: number;
-    shouldRun: boolean;
-}) {
-    const stockfishRef = useRef<Engine | null>(null);
+function Stockfish({ fen, vfen, depth, shouldRun }: { fen: string; vfen: string; depth: number; shouldRun: boolean }) {
+    const stockfish = useRef<Engine | null>(null);
     const [evals, setEvals] = useState<string>("0.0");
     const [eData, setEdata] = useState<Array<string>>([]);
     const [heightDef, setHeightDef] = useState<number>(75);
 
     useEffect(() => {
-        if (!fen) {
-            setEdata(["Setting up Stockfish 15..."]);
-            const reqs = [new XMLHttpRequest(), new XMLHttpRequest(), new XMLHttpRequest()];
-            reqs[0].open("HEAD", "/stockfish.js", false);
-            reqs[1].open("HEAD", "/stockfish.wasm", false);
-            reqs[2].open("HEAD", document.location.pathname, false);
-            reqs.forEach((req) => req.send());
+        setEdata(["Setting up Stockfish 15..."]);
+        const reqs = [new XMLHttpRequest(), new XMLHttpRequest(), new XMLHttpRequest()];
+        reqs[0].open("HEAD", "/stockfish.js", false);
+        reqs[1].open("HEAD", "/stockfish.wasm", false);
+        reqs[2].open("HEAD", document.location.pathname, false);
+        reqs.forEach((req) => req.send());
 
-            const headers = reqs[2].getAllResponseHeaders();
-            const noHeaders =
-                !headers.includes("cross-origin-embedder-policy:") || !headers.includes("cross-origin-opener-policy:");
+        const headers = reqs[2].getAllResponseHeaders();
+        const noHeaders =
+            !headers.includes("cross-origin-embedder-policy:") || !headers.includes("cross-origin-opener-policy:");
 
-            if (reqs[0].status === 404) {
-                setEdata((eData) => [...eData, "E: Could not find stockfish.js file."]);
-            } else {
-                setEdata((eData) => [...eData, "Found stockfish.js."]);
-            }
-
-            if (reqs[1].status === 404) {
-                setEdata((eData) => [...eData, "E: Could not find WebAssembly binary."]);
-            } else {
-                setEdata((eData) => [...eData, "Found WebAssembly binary."]);
-            }
-
-            if (noHeaders) {
-                if (!headers.includes("cross-origin-embedder-policy:")) {
-                    setEdata((eData) => [
-                        ...eData,
-                        "E: Cross-Origin-Embedder-Policy HTTP header is not set to 'require-corp'.",
-                    ]);
-                }
-                if (!headers.includes("cross-origin-opener-policy:")) {
-                    setEdata((eData) => [
-                        ...eData,
-                        "E: Cross-Origin-Opener-Policy HTTP header is not set to 'same-origin'.",
-                    ]);
-                }
-            } else {
-                setEdata((eData) => [...eData, "Cross-origin isolation is enabled."]);
-            }
-
-            if (reqs[0].status === 404 || reqs[1].status === 404 || noHeaders) {
-                setEdata((eData) => [...eData, "Configuration has failed."]);
-                setEvals("⌀");
-            } else {
-                setEdata((eData) => [...eData, "Stockfish 15 is ready."]);
-                setEvals("0.0");
-            }
-
-            setHeightDef(50);
-            return;
-        }
-
-        // Clear edata array for next evaluation
-        if (!eData.includes("Configuration has failed.")) {
-            setEdata([]);
+        if (reqs[0].status === 404) {
+            setEdata((eData) => [...eData, "E: Could not find stockfish.js file."]);
         } else {
-            // Exit if we can't use Stockfish
-            return;
+            setEdata((eData) => [...eData, "Found stockfish.js."]);
         }
 
-        const stockfish = stockfishRef.current ?? new Engine(fen, vfen, depth);
-
-        // Run classical evaluation with Stockfish 15
-        stockfish.engine.postMessage("uci");
-        stockfish.engine.postMessage("ucinewgame");
-        stockfish.engine.postMessage(`position fen ${stockfish.fen[0]}`);
-        stockfish.engine.postMessage(`go depth ${depth}`);
-
-        // Do we have anything on the virtual board? Check the differences and if they are
-        // then run an evaluation on the virtual board
-        if (stockfish.fen[0] !== stockfish.fen[1]) {
-            stockfish.fusionengine.postMessage("uci");
-            stockfish.fusionengine.postMessage("ucinewgame");
-            stockfish.fusionengine.postMessage(`position fen ${stockfish.fen[1]}`);
-            stockfish.fusionengine.postMessage(`go depth ${depth}`);
+        if (reqs[1].status === 404) {
+            setEdata((eData) => [...eData, "E: Could not find WebAssembly binary."]);
+        } else {
+            setEdata((eData) => [...eData, "Found WebAssembly binary."]);
         }
+
+        if (noHeaders) {
+            if (!headers.includes("cross-origin-embedder-policy:")) {
+                setEdata((eData) => [
+                    ...eData,
+                    "E: Cross-Origin-Embedder-Policy HTTP header is not set to 'require-corp'.",
+                ]);
+            }
+            if (!headers.includes("cross-origin-opener-policy:")) {
+                setEdata((eData) => [
+                    ...eData,
+                    "E: Cross-Origin-Opener-Policy HTTP header is not set to 'same-origin'.",
+                ]);
+            }
+        } else {
+            setEdata((eData) => [...eData, "Cross-origin isolation is enabled."]);
+        }
+
+        if (reqs[0].status === 404 || reqs[1].status === 404 || noHeaders) {
+            setEdata((eData) => [...eData, "Configuration has failed."]);
+            setEvals("⌀");
+        } else {
+            setEdata((eData) => [...eData, "Stockfish 15 is ready."]);
+            setEvals("0.0");
+        }
+
+        setHeightDef(50);
+        stockfish.current = new Engine(fen, vfen, depth);
+        stockfish.current.engine.postMessage("uci");
+        stockfish.current.engine.postMessage("ucinewgame");
+        stockfish.current.fusionengine.postMessage("uci");
+        stockfish.current.fusionengine.postMessage("ucinewgame");
 
         // Use a debounce timeout to prevent the eval from updating rapidly
         let debounceTimeout: ReturnType<typeof setTimeout>;
@@ -263,27 +242,51 @@ function Stockfish({
             }
             clearTimeout(debounceTimeout);
             debounceTimeout = setTimeout(() => {
-                // Do not set evals if the stockfish.eval value is 'info' meaning that there is no evaluation ready
+                // Do not set evals if the stockfish.current?.eval value is 'info' meaning that there is no evaluation ready
                 // This happens in higher depth analysis above 20, where it takes a lot of computing power to execute
-                const evaluation = stockfish.chooseAppropriateEval();
+                const evaluation = stockfish.current?.chooseAppropriateEval();
                 if (evaluation && evaluation !== "NaN" && evaluation !== "info") setEvals(evaluation);
                 // Don't set the eval height if it is NaN, we cannot translate it and it usually only comes up when it is M0 (checkmate)
-                if (!isNaN(stockfish.evalBarHeight)) setHeightDef(stockfish.evalBarHeight);
+                if (!stockfish.current) return;
+                if (!isNaN(stockfish.current.evalBarHeight)) {
+                    setHeightDef(stockfish.current.evalBarHeight);
+                }
             }, 500);
         };
-        stockfish.engine.addEventListener("message", (e) => updateEval(e, "s"));
-        stockfish.fusionengine.addEventListener("message", (e) => updateEval(e, "v"));
+        stockfish.current?.engine.addEventListener("message", (e) => updateEval(e, "s"));
+        stockfish.current?.fusionengine.addEventListener("message", (e) => updateEval(e, "v"));
 
         return () => {
-            clearTimeout(debounceTimeout);
-            stockfish.engine.removeEventListener("message", (e) => updateEval(e, "s"));
-            stockfish.fusionengine.removeEventListener("message", (e) => updateEval(e, "v"));
-
+            stockfish.current?.engine.removeEventListener("message", (e) => updateEval(e, "s"));
+            stockfish.current?.fusionengine.removeEventListener("message", (e) => updateEval(e, "v"));
             // Avoid any cataclysmic quantum resonance cascades by freeing web worker memory
-            stockfish.engine.terminate();
-            stockfish.fusionengine.terminate();
+            stockfish.current?.engine.terminate();
+            stockfish.current?.fusionengine.terminate();
         };
+    }, []);
+
+    useEffect(() => {
+        if (!fen) return;
+
+        stockfish.current?.updateFens(fen, vfen);
+
+        // Run classical evaluation with Stockfish 15
+        stockfish.current?.engine.postMessage(`position fen ${fen}`);
+        stockfish.current?.engine.postMessage(`go depth ${depth}`);
+        if (vfen !== fen) {
+            stockfish.current?.fusionengine.postMessage(`position fen ${vfen}`);
+            stockfish.current?.fusionengine.postMessage(`go depth ${depth}`);
+        }
     }, [fen, depth]);
+
+    useEffect(() => {
+        if (!shouldRun) {
+            stockfish.current?.engine.postMessage("uci");
+            stockfish.current?.engine.postMessage("ucinewgame");
+            stockfish.current?.fusionengine.postMessage("uci");
+            stockfish.current?.fusionengine.postMessage("ucinewgame");
+        }
+    }, [shouldRun]);
 
     return (
         <>
@@ -344,8 +347,10 @@ function Stockfish({
             </div>
             <div id="stockfish" style={{ textAlign: "center" }}>
                 <p className="title">Stockfish 15</p>
+                <b>(Caution: EXPERIMENTAL)</b> <br />
                 Status: {evals === "⌀" ? "UNAVAILABLE" : fen ? "ACTIVE" : "STANDBY"} <br />
-                Current engine evaluation: {evals.startsWith("M") ? evals.replace("-", "") : evals} <br />
+                Merged engine evaluation: {evals.startsWith("M") ? evals.replace("-", "") : evals} <br />
+                <b>Main: {stockfish.current?.eval[0]}, Virt: {stockfish.current?.eval[1]}</b> <br />
                 Max depth={depth} <br /> <br />
                 <div
                     className="scrollelement"

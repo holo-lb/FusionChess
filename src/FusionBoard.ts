@@ -495,7 +495,8 @@ export default class FusionBoard extends ChessBoard {
                 // We do not have to worry about the actual validity as the calling function will already confirm legality
                 const origin = copy.get(movefrom as Square);
                 copy.remove(movefrom as Square);
-                copy.put(origin, moveto as Square);
+                if (origin)
+                    copy.put(origin, moveto as Square);
             }
             copy.remove(opponentking as Square);
             copy.put(

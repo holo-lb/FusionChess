@@ -457,9 +457,9 @@ function App() {
             </div>
             {isStockfishOn &&
                 <Stockfish
-                    fen={isGameStarted ? fen : null}
-                    vfen={isGameStarted ? game.positions[2] : ""}
-                    depth={18}
+                    fen={game.positions[0]}
+                    vfen={game.positions[2]}
+                    depth={10}
                     shouldRun={!game.isGameOver()}
                 />
             }
